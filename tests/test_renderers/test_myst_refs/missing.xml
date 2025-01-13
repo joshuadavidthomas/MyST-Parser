@@ -1,4 +1,8 @@
 <document source="root/index.md">
     <paragraph>
-        <pending_xref refdoc="index" refdomain="" refexplicit="False" reftarget="ref" reftype="myst" refwarn="True">
-            <inline classes="xref myst">
+        <reference refid="ref">
+            <literal classes="xref myst">
+                ref
+
+
+<src>/index.md:1: WARNING: 'myst' cross-reference target not found: 'ref' [myst.xref_missing]

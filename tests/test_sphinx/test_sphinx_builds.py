@@ -1,18 +1,17 @@
 """Uses sphinx's pytest fixture to run builds.
 
 see conftest.py for fixture usage
-
-NOTE: sphinx 3 & 4 regress against different output files,
-the major difference being sphinx 4 uses docutils 0.17,
-which uses semantic HTML tags
-(e.g. converting `<div class="section">` to `<section>`)
 """
+
+from __future__ import annotations
+
 import os
 import re
+from pathlib import Path
 
 import pytest
 import sphinx
-from docutils import VersionInfo, __version_info__
+from sphinx.util.console import strip_colors
 
 SOURCE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "sourcedirs"))
 
@@ -37,24 +36,32 @@ def test_basic(
     warnings = warning.getvalue().strip()
     assert warnings == ""
 
-    get_sphinx_app_doctree(
-        app,
-        docname="content",
-        regress=True,
-        regress_ext=f".sphinx{sphinx.version_info[0]}.xml",
-    )
-    get_sphinx_app_doctree(
-        app,
-        docname="content",
-        resolve=True,
-        regress=True,
-        regress_ext=f".sphinx{sphinx.version_info[0]}.xml",
-    )
+    try:
+        get_sphinx_app_doctree(
+            app,
+            docname="content",
+            regress=True,
+            replace={
+                # changed in sphinx 7.1
+                '<literal classes="code" language="">': '<literal classes="code">',
+            },
+        )
+    finally:
+        get_sphinx_app_doctree(
+            app,
+            docname="content",
+            resolve=True,
+            regress=True,
+            replace={
+                # changed in sphinx 7.1
+                '<literal classes="code" language="">': '<literal classes="code">',
+            },
+        )
     get_sphinx_app_output(
         app,
         filename="content.html",
         regress_html=True,
-        regress_ext=f".sphinx{sphinx.version_info[0]}.html",
+        regress_ext=".html",
     )
 
     assert app.env.metadata["content"] == {
@@ -78,7 +85,10 @@ def test_basic(
     buildername="html",
     srcdir=os.path.join(SOURCE_DIR, "references"),
     freshenv=True,
-    confoverrides={"myst_enable_extensions": ["dollarmath"]},
+    confoverrides={
+        "myst_enable_extensions": ["dollarmath"],
+        "show_warning_types": True,
+    },
 )
 def test_references(
     app,
@@ -91,8 +101,12 @@ def test_references(
     app.build()
 
     assert "build succeeded" in status.getvalue()  # Build succeeded
-    warnings = warning.getvalue().strip()
-    assert warnings == ""
+    # should be one warning:
+    # WARNING: Multiple matches found for 'duplicate':
+    # inter:py:module:duplicate, inter:std:label:duplicate [myst.iref_ambiguous]
+    warnings = warning.getvalue().strip().splitlines()
+    assert len(warnings) == 1
+    assert "[myst.iref_ambiguous]" in warnings[0]
 
     try:
         get_sphinx_app_doctree(app, docname="index", regress=True)
@@ -104,7 +118,7 @@ def test_references(
                 app,
                 filename="index.html",
                 regress_html=True,
-                regress_ext=f".sphinx{sphinx.version_info[0]}.html",
+                replace={"Permalink to this headline": "Permalink to this heading"},
             )
 
 
@@ -146,7 +160,12 @@ def test_references_singlehtml(
             docname="other/other",
             resolve=True,
             regress=True,
-            replace={"other\\other.md": "other/other.md"},
+            replace={
+                "other\\other.md": "other/other.md",
+                # changed in sphinx 7.3
+                '="#document-index': '="index.html#document-index',
+                '="#document-other': '="index.html#document-other',
+            },
         )
 
     get_sphinx_app_output(
@@ -154,7 +173,14 @@ def test_references_singlehtml(
         filename="index.html",
         buildername="singlehtml",
         regress_html=True,
-        regress_ext=f".sphinx{sphinx.version_info[0]}.html",
+        replace={
+            "Permalink to this headline": "Permalink to this heading",
+            # changed in sphinx 7.3
+            '="#document-index': '="index.html#document-index',
+            '="#document-other': '="index.html#document-other',
+            # change in sphinx 8
+            'href="index.html#': 'href="#',
+        },
     )
 
 
@@ -185,7 +211,7 @@ def test_heading_slug_func(
         app,
         filename="index.html",
         regress_html=True,
-        regress_ext=f".sphinx{sphinx.version_info[0]}.html",
+        replace={"Permalink to this headline": "Permalink to this heading"},
     )
 
 
@@ -203,7 +229,7 @@ def test_extended_syntaxes(
     monkeypatch,
 ):
     """test setting addition configuration values."""
-    from myst_parser.sphinx_renderer import SphinxRenderer
+    from myst_parser.mdit_to_docutils.sphinx_ import SphinxRenderer
 
     monkeypatch.setattr(SphinxRenderer, "_random_label", lambda self: "mock-uuid")
     app.build()
@@ -216,14 +242,13 @@ def test_extended_syntaxes(
             app,
             docname="index",
             regress=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.xml",
         )
     finally:
         get_sphinx_app_output(
             app,
             filename="index.html",
             regress_html=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.html",
+            replace={"Permalink to this headline": "Permalink to this heading"},
         )
 
 
@@ -249,12 +274,14 @@ def test_includes(
             app,
             docname="index",
             regress=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.xml",
+            rstrip_lines=True,
             # fix for Windows CI
             replace={
                 r"subfolder\example2.jpg": "subfolder/example2.jpg",
                 r"subfolder\\example2.jpg": "subfolder/example2.jpg",
                 r"subfolder\\\\example2.jpg": "subfolder/example2.jpg",
+                # added in sphinx 7.2 (#9846)
+                'original_uri="/subfolder/example2.jpg" ': "",
             },
         )
     finally:
@@ -262,8 +289,8 @@ def test_includes(
             app,
             filename="index.html",
             regress_html=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.html",
             replace={
+                "Permalink to this headline": "Permalink to this heading",
                 r"'subfolder\\example2'": "'subfolder/example2'",
                 r'uri="subfolder\\example2"': 'uri="subfolder/example2"',
                 "_images/example21.jpg": "_images/example2.jpg",
@@ -271,10 +298,6 @@ def test_includes(
         )
 
 
-@pytest.mark.skipif(
-    __version_info__ < VersionInfo(0, 17, 0, "final", 0, True),
-    reason="parser option added in docutils 0.17",
-)
 @pytest.mark.sphinx(
     buildername="html",
     srcdir=os.path.join(SOURCE_DIR, "include_from_rst"),
@@ -315,8 +338,19 @@ def test_footnotes(
     app.build()
 
     assert "build succeeded" in status.getvalue()  # Build succeeded
-    warnings = warning.getvalue().strip()
-    assert warnings == ""
+    warnings = strip_colors(warning.getvalue()).replace(
+        str(app.srcdir) + os.path.sep, "source/"
+    )
+    # print(warnings)
+    assert (
+        warnings.strip()
+        == """
+source/footnote_md.md:29: WARNING: Footnote [1] is not referenced. [ref.footnote]
+source/footnote_md.md:31: WARNING: Footnote [#] is not referenced. [ref.footnote]
+source/footnote_rst.rst:26: WARNING: Footnote [1] is not referenced. [ref.footnote]
+source/footnote_rst.rst:28: WARNING: Footnote [#] is not referenced. [ref.footnote]
+""".strip()
+    )
 
     try:
         get_sphinx_app_doctree(app, docname="footnote_md", regress=True)
@@ -325,7 +359,10 @@ def test_footnotes(
             app,
             filename="footnote_md.html",
             regress_html=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.html",
+            regress_ext=".html",
+            replace={
+                'role="note">': 'role="doc-footnote">',  # changed in docutils 0.20
+            },
         )
 
 
@@ -354,7 +391,7 @@ def test_commonmark_only(
             app,
             filename="index.html",
             regress_html=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.html",
+            replace={"Permalink to this headline": "Permalink to this heading"},
         )
 
 
@@ -407,7 +444,9 @@ def test_gettext(
     output = re.sub(r"POT-Creation-Date: [0-9: +-]+", "POT-Creation-Date: ", output)
     output = re.sub(r"Copyright \(C\) [0-9]{4}", "Copyright (C) XXXX", output)
 
-    file_regression.check(output, extension=f".sphinx{sphinx.version_info[0]}.pot")
+    if sphinx.version_info < (7, 4):
+        output = output.replace("Python ", "Project name not set ")
+    file_regression.check(output, extension=".pot")
 
 
 @pytest.mark.sphinx(
@@ -434,7 +473,6 @@ def test_gettext_html(
             app,
             docname="index",
             regress=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.xml",
         )
     finally:
         get_sphinx_app_doctree(
@@ -442,13 +480,20 @@ def test_gettext_html(
             docname="index",
             resolve=True,
             regress=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.xml",
         )
     get_sphinx_app_output(
         app,
         filename="index.html",
         regress_html=True,
-        regress_ext=f".sphinx{sphinx.version_info[0]}.html",
+        regress_ext=".html",
+        replace={
+            # upstream bug https://github.com/sphinx-doc/sphinx/issues/11689
+            '"Permalink to this heading"': '"Lien permanent vers cette rubrique"',
+            # which was fixed to a different translation in sphinx 7.3
+            '"Lien vers cette rubrique"': '"Lien permanent vers cette rubrique"',
+            # changed in docutils>0.19
+            ' role="note">': ' role="doc-footnote">',
+        },
     )
 
 
@@ -483,7 +528,9 @@ def test_gettext_additional_targets(
     output = re.sub(r"POT-Creation-Date: [0-9: +-]+", "POT-Creation-Date: ", output)
     output = re.sub(r"Copyright \(C\) [0-9]{4}", "Copyright (C) XXXX", output)
 
-    file_regression.check(output, extension=f".sphinx{sphinx.version_info[0]}.pot")
+    if sphinx.version_info < (7, 4):
+        output = output.replace("Python ", "Project name not set ")
+    file_regression.check(output, extension=".pot")
 
 
 @pytest.mark.sphinx(
@@ -530,14 +577,19 @@ def test_fieldlist_extension(
             app,
             docname="index",
             regress=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.xml",
-            # changed in:
-            # https://www.sphinx-doc.org/en/master/changes.html#release-4-4-0-released-jan-17-2022
             replace={
+                # changed in sphinx 7.2 for desc_sig_name node
+                'classes="n n"': 'classes="n"',
+                # changed in sphinx 7.2 for desc_parameterlist node
+                'multi_line_parameter_list="False" ': "",
+                # changed in sphinx 7.1 (but fixed in 7.2) for desc_signature/desc_name nodes
+                'classes="sig sig-object sig sig-object"': 'classes="sig sig-object"',
+                'classes="sig-name descname sig-name descname"': 'classes="sig-name descname"',
+                # changed in sphinx 7.2 (#11533)
                 (
-                    '<literal_strong py:class="True" '
-                    'py:module="True" refspecific="True">'
-                ): "<literal_strong>"
+                    'no-contents-entry="False" no-index="False" '
+                    'no-index-entry="False" no-typesetting="False" '
+                ): "",
             },
         )
     finally:
@@ -545,5 +597,60 @@ def test_fieldlist_extension(
             app,
             filename="index.html",
             regress_html=True,
-            regress_ext=f".sphinx{sphinx.version_info[0]}.html",
+            regress_ext=".html",
         )
+
+
+@pytest.mark.sphinx(
+    buildername="texinfo",
+    srcdir=os.path.join(SOURCE_DIR, "texinfo"),
+    freshenv=True,
+)
+def test_texinfo(app, status, warning):
+    """Test Texinfo builds."""
+    app.build()
+    assert "build succeeded" in status.getvalue()  # Build succeeded
+    warnings = warning.getvalue().strip()
+    assert warnings == ""
+
+
+@pytest.mark.skipif(
+    sphinx.version_info < (7, 2, 5), reason="include-read event added in sphinx 7.2.5"
+)
+@pytest.mark.sphinx(
+    buildername="html",
+    srcdir=os.path.join(SOURCE_DIR, "includes"),
+    freshenv=True,
+)
+def test_include_read_event(app, status, warning):
+    """Test that include-read event is emitted correctly."""
+
+    include_read_events = []
+
+    def handle_include_read(
+        app, relative_path: Path, parent_docname: str, content: list[str]
+    ) -> None:
+        include_read_events.append((relative_path, parent_docname, content))
+
+    app.connect("include-read", handle_include_read)
+    app.build()
+    assert "build succeeded" in status.getvalue()  # Build succeeded
+    warnings = warning.getvalue().strip()
+    assert warnings == ""
+    expected = [
+        ("../include_from_rst/include.md", "index"),
+        ("include1.inc.md", "index"),
+        (os.path.join("subfolder", "include2.inc.md"), "include1.inc"),
+        ("include_code.py", "index"),
+        ("include_code.py", "index"),
+        ("include_literal.txt", "index"),
+        ("include_literal.txt", "index"),
+    ]
+    expected_events = []
+    for include_file_name, parent_docname in expected:
+        with open(os.path.join(SOURCE_DIR, "includes", include_file_name)) as file:
+            content = file.read()
+        expected_events.append((Path(include_file_name), parent_docname, [content]))
+    assert len(include_read_events) == len(expected_events), "Wrong number of events"
+    for evt in expected_events:
+        assert evt in include_read_events

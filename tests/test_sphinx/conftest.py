@@ -31,13 +31,16 @@ parameters available to parse to ``@pytest.mark.sphinx``:
 - docutilsconf=None
 
 """
+
 import os
 import pathlib
 import shutil
 
 import pytest
 from bs4 import BeautifulSoup
-from sphinx.testing.path import path
+from docutils import nodes
+
+from myst_parser._compat import findall
 
 SOURCE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "sourcedirs"))
 
@@ -63,16 +66,11 @@ def get_sphinx_app_output(file_regression):
         regress_ext=".html",
         replace=None,
     ):
-
-        outpath = path(os.path.join(str(app.srcdir), "_build", buildername, filename))
+        outpath = pathlib.Path(str(app.srcdir), "_build", buildername, filename)
         if not outpath.exists():
-            raise IOError("no output file exists: {}".format(outpath))
+            raise OSError(f"no output file exists: {outpath}")
 
-        try:
-            # introduced in sphinx 3.0
-            content = outpath.read_text(encoding=encoding)
-        except AttributeError:
-            content = outpath.text(encoding=encoding)
+        content = outpath.read_text(encoding=encoding)
 
         if regress_html:
             # only regress the inner body, since other sections are non-deterministic
@@ -81,7 +79,13 @@ def get_sphinx_app_output(file_regression):
             # pygments 2.11.0 introduces a whitespace tag
             for pygment_whitespace in doc_div.select("pre > span.w"):
                 pygment_whitespace.replace_with(pygment_whitespace.text)
+            # something changed in sphinx 8 (or new docutils) to introduce this, although I couldn't find the actual commit,
+            # but in any case, it's not important for the regression test
+            for clearer_div in doc_div.findAll("div", {"class": "clearer"}):
+                clearer_div.decompose()
             text = doc_div.prettify()
+            # changed in sphinx 7.2
+            text = text.replace('"Link to this', '"Permalink to this')
             for find, rep in (replace or {}).items():
                 text = text.replace(find, rep)
             file_regression.check(text, extension=regress_ext, encoding="utf8")
@@ -99,6 +103,7 @@ def get_sphinx_app_doctree(file_regression):
         resolve=False,
         regress=False,
         replace=None,
+        rstrip_lines=False,
         regress_ext=".xml",
     ):
         if resolve:
@@ -109,15 +114,24 @@ def get_sphinx_app_doctree(file_regression):
             extension = regress_ext
 
         # convert absolute filenames
-        for node in doctree.traverse(
+        for node in findall(doctree)(
             lambda n: "source" in n and not isinstance(n, str)
         ):
             node["source"] = pathlib.Path(node["source"]).name
+
+        doctree = doctree.deepcopy()
+
+        # remove attrs added in sphinx 7.1
+        doctree.attributes.pop("translation_progress", None)
+        for node in findall(doctree)(nodes.Element):
+            node.attributes.pop("translated", None)
 
         if regress:
             text = doctree.pformat()  # type: str
             for find, rep in (replace or {}).items():
                 text = text.replace(find, rep)
+            if rstrip_lines:
+                text = "\n".join([li.rstrip() for li in text.splitlines()])
             file_regression.check(text, extension=extension)
 
         return doctree

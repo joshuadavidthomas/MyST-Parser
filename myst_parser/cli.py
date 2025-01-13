@@ -2,8 +2,11 @@ import argparse
 import sys
 
 from markdown_it.renderer import RendererHTML
+from markdown_it.rules_core import StateCore
+from mdit_py_plugins.anchors import anchors_plugin
 
-from myst_parser.main import MdParserConfig, create_md_parser
+from myst_parser.config.main import MdParserConfig
+from myst_parser.parsers.mdit import create_md_parser
 
 
 def print_anchors(args=None):
@@ -12,14 +15,14 @@ def print_anchors(args=None):
     arg_parser.add_argument(
         "input",
         nargs="?",
-        type=argparse.FileType("r"),
+        type=argparse.FileType("r", encoding="utf8"),
         default=sys.stdin,
         help="Input file (default stdin)",
     )
     arg_parser.add_argument(
         "-o",
         "--output",
-        type=argparse.FileType("w"),
+        type=argparse.FileType("w", encoding="utf8"),
         default=sys.stdout,
         help="Output file (default stdout)",
     )
@@ -27,9 +30,10 @@ def print_anchors(args=None):
         "-l", "--level", type=int, default=2, help="Maximum heading level."
     )
     args = arg_parser.parse_args(args)
-    parser = create_md_parser(MdParserConfig(heading_anchors=args.level), RendererHTML)
+    parser = create_md_parser(MdParserConfig(), RendererHTML)
+    parser.use(anchors_plugin, max_level=args.level)
 
-    def _filter_plugin(state):
+    def _filter_plugin(state: StateCore) -> None:
         state.tokens = [
             t
             for t in state.tokens

@@ -1,11 +1,14 @@
 """This module provides classes to Mock the core components of the docutils.RSTParser,
 the key difference being that nested parsing treats the text as Markdown not rST.
 """
+
+from __future__ import annotations
+
 import os
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any
 
 from docutils import nodes
 from docutils.parsers.rst import Directive, DirectiveError
@@ -15,10 +18,10 @@ from docutils.parsers.rst.states import Body, Inliner, RSTStateMachine
 from docutils.statemachine import StringList
 from docutils.utils import unescape
 
-from .parse_directives import parse_directive_text
+from .parsers.directives import MarkupError, parse_directive_text
 
 if TYPE_CHECKING:
-    from .docutils_renderer import DocutilsRenderer
+    from .mdit_to_docutils.base import DocutilsRenderer
 
 
 class MockingError(Exception):
@@ -31,7 +34,7 @@ class MockInliner:
     This is parsed to role functions.
     """
 
-    def __init__(self, renderer: "DocutilsRenderer"):
+    def __init__(self, renderer: DocutilsRenderer):
         """Initialize the mock inliner."""
         self._renderer = renderer
         # here we mock that the `parse` method has already been called
@@ -43,7 +46,7 @@ class MockInliner:
 
         if not hasattr(self.reporter, "get_source_and_line"):
             # In docutils this is set by `RSTState.runtime_init`
-            self.reporter.get_source_and_line = lambda l: (self.document["source"], l)
+            self.reporter.get_source_and_line = lambda li: (self.document["source"], li)
 
         self.rfc_url = "rfc%d.html"
 
@@ -59,7 +62,7 @@ class MockInliner:
 
     def parse(
         self, text: str, lineno: int, memo: Any, parent: nodes.Node
-    ) -> Tuple[List[nodes.Node], List[nodes.system_message]]:
+    ) -> tuple[list[nodes.Node], list[nodes.system_message]]:
         """Parse the text and return a list of nodes."""
         # note the only place this is normally called,
         # is by `RSTState.inline_text`, or in directives: `self.state.inline_text`,
@@ -82,11 +85,9 @@ class MockInliner:
         """
         # TODO use document.reporter mechanism?
         if hasattr(Inliner, name):
-            msg = "{cls} has not yet implemented attribute '{name}'".format(
-                cls=type(self).__name__, name=name
-            )
+            msg = f"{type(self).__name__} has not yet implemented attribute '{name}'"
             raise MockingError(msg).with_traceback(sys.exc_info()[2])
-        msg = "{cls} has no attribute {name}".format(cls=type(self).__name__, name=name)
+        msg = f"{type(self).__name__} has no attribute {name}"
         raise MockingError(msg).with_traceback(sys.exc_info()[2])
 
 
@@ -100,8 +101,8 @@ class MockState:
 
     def __init__(
         self,
-        renderer: "DocutilsRenderer",
-        state_machine: "MockStateMachine",
+        renderer: DocutilsRenderer,
+        state_machine: MockStateMachine,
         lineno: int,
     ):
         self._renderer = renderer
@@ -115,8 +116,8 @@ class MockState:
             document = self.document
             reporter = self.document.reporter
             language = renderer.language_module_rst
-            title_styles: List[str] = []
-            section_level = max(renderer._level_to_elem)
+            title_styles: list[str] = []
+            section_level = max(renderer._level_to_section)
             section_bubble_up_kludge = False
             inliner = self.inliner
 
@@ -126,24 +127,26 @@ class MockState:
         self,
         content: StringList,
         line_offset: int,
-        directive: Type[Directive],
-        option_presets: dict,
-    ) -> Tuple[list, dict, StringList, int]:
+        directive: type[Directive],
+        option_presets: dict[str, Any],
+    ) -> tuple[list[str], dict[str, Any], StringList, int]:
         """Parse the full directive text
 
+        :raises MarkupError: for errors in parsing the directive
         :returns: (arguments, options, content, content_offset)
         """
+        # note this is essentially only used by the docutils `role` directive
         if option_presets:
             raise MockingError("parse_directive_block: option_presets not implemented")
         # TODO should argument_str always be ""?
-        arguments, options, body_lines, content_offset = parse_directive_text(
-            directive, "", "\n".join(content)
-        )
+        parsed = parse_directive_text(directive, "", "\n".join(content))
+        if parsed.warnings:
+            raise MarkupError(",".join(w.msg for w in parsed.warnings))
         return (
-            arguments,
-            options,
-            StringList(body_lines, source=content.source),
-            line_offset + content_offset,
+            parsed.arguments,
+            parsed.options,
+            StringList(parsed.body, source=content.source),
+            line_offset + parsed.body_offset,
         )
 
     def nested_parse(
@@ -170,13 +173,13 @@ class MockState:
             self._renderer.nested_render_text(
                 "\n".join(block),
                 self._lineno + input_offset,
-                allow_headings=match_titles,
+                temp_root_node=node if match_titles else None,
             )
         self.state_machine.match_titles = sm_match_titles
 
     def parse_target(self, block, block_text, lineno: int):
         """
-        Taken from https://github.com/docutils-mirror/docutils/blob/e88c5fb08d5cdfa8b4ac1020dd6f7177778d5990/docutils/parsers/rst/states.py#L1927  # noqa: E501
+        Taken from https://github.com/docutils-mirror/docutils/blob/e88c5fb08d5cdfa8b4ac1020dd6f7177778d5990/docutils/parsers/rst/states.py#L1927
         """
         # Commenting out this code because it only applies to rST
         # if block and block[-1].strip()[-1:] == "_":  # possible indirect target
@@ -189,7 +192,7 @@ class MockState:
 
     def inline_text(
         self, text: str, lineno: int
-    ) -> Tuple[List[nodes.Element], List[nodes.Element]]:
+    ) -> tuple[list[nodes.Element], list[nodes.Element]]:
         """Parse text with only inline rules.
 
         :returns: (list of nodes, list of messages)
@@ -199,7 +202,7 @@ class MockState:
     # U+2014 is an em-dash:
     attribution_pattern = re.compile("^((?:---?(?!-)|\u2014) *)(.+)")
 
-    def block_quote(self, lines: List[str], line_offset: int) -> List[nodes.Element]:
+    def block_quote(self, lines: list[str], line_offset: int) -> list[nodes.Element]:
         """Parse a block quote, which is a block of text,
         followed by an (optional) attribution.
 
@@ -260,21 +263,47 @@ class MockState:
     def build_table_row(self, rowdata, tableline):
         return Body.build_table_row(self, rowdata, tableline)
 
+    def nest_line_block_lines(self, block: nodes.line_block):
+        """Modify the line block element in-place, to nest line block segments.
+
+        Line nodes are placed into child line block containers, based on their indentation.
+        """
+        for index in range(1, len(block)):
+            if getattr(block[index], "indent", None) is None:
+                block[index].indent = block[index - 1].indent
+        self._nest_line_block_segment(block)
+
+    def _nest_line_block_segment(self, block: nodes.line_block):
+        indents = [item.indent for item in block]
+        least = min(indents)
+        new_items = []
+        new_block = nodes.line_block()
+        for item in block:
+            if item.indent > least:
+                new_block.append(item)
+            else:
+                if len(new_block):
+                    self._nest_line_block_segment(new_block)
+                    new_items.append(new_block)
+                    new_block = nodes.line_block()
+                new_items.append(item)
+        if len(new_block):
+            self._nest_line_block_segment(new_block)
+            new_items.append(new_block)
+        block[:] = new_items
+
     def __getattr__(self, name: str):
         """This method is only be called if the attribute requested has not
         been defined. Defined attributes will not be overridden.
         """
         cls = type(self).__name__
-        if hasattr(Body, name):
-            msg = (
-                f"{cls} has not yet implemented attribute '{name}'. "
-                "You can parse RST directly via the `{eval-rst}` directive: "
-                "https://myst-parser.readthedocs.io/en/latest/syntax/syntax.html#how-directives-parse-content"  # noqa: E501
-            )
-        else:
-            # The requested `name` is not a docutils Body element
-            # (such as "footnote", "block_quote", "paragraph", …)
-            msg = f"{cls} has no attribute '{name}'"
+        msg = (
+            f"{cls} has not yet implemented attribute '{name}'. "
+            "You can parse RST directly via the `{{eval-rst}}` directive: "
+            "https://myst-parser.readthedocs.io/en/latest/syntax/syntax.html#how-directives-parse-content"
+            if hasattr(Body, name)
+            else f"{cls} has no attribute '{name}'"
+        )
         raise MockingError(msg).with_traceback(sys.exc_info()[2])
 
 
@@ -284,7 +313,7 @@ class MockStateMachine:
     This is parsed to the `Directives.run()` method.
     """
 
-    def __init__(self, renderer: "DocutilsRenderer", lineno: int):
+    def __init__(self, renderer: DocutilsRenderer, lineno: int):
         self._renderer = renderer
         self._lineno = lineno
         self.document = renderer.document
@@ -293,11 +322,11 @@ class MockStateMachine:
         self.node: nodes.Element = renderer.current_node
         self.match_titles: bool = True
 
-    def get_source(self, lineno: Optional[int] = None):
+    def get_source(self, lineno: int | None = None):
         """Return document source path."""
         return self.document["source"]
 
-    def get_source_and_line(self, lineno: Optional[int] = None):
+    def get_source_and_line(self, lineno: int | None = None):
         """Return (source path, line) tuple for current or given line number."""
         return self.document["source"], lineno or self._lineno
 
@@ -306,11 +335,9 @@ class MockStateMachine:
         been defined. Defined attributes will not be overridden.
         """
         if hasattr(RSTStateMachine, name):
-            msg = "{cls} has not yet implemented attribute '{name}'".format(
-                cls=type(self).__name__, name=name
-            )
+            msg = f"{type(self).__name__} has not yet implemented attribute '{name}'"
             raise MockingError(msg).with_traceback(sys.exc_info()[2])
-        msg = "{cls} has no attribute {name}".format(cls=type(self).__name__, name=name)
+        msg = f"{type(self).__name__} has no attribute {name}"
         raise MockingError(msg).with_traceback(sys.exc_info()[2])
 
 
@@ -324,12 +351,12 @@ class MockIncludeDirective:
 
     def __init__(
         self,
-        renderer: "DocutilsRenderer",
+        renderer: DocutilsRenderer,
         name: str,
-        klass: Include,
-        arguments: list,
-        options: dict,
-        body: List[str],
+        klass: type[Include],
+        arguments: list[str],
+        options: dict[str, Any],
+        body: list[str],
         lineno: int,
     ):
         self.renderer = renderer
@@ -341,12 +368,11 @@ class MockIncludeDirective:
         self.body = body
         self.lineno = lineno
 
-    def run(self) -> List[nodes.Element]:
-
+    def run(self) -> list[nodes.Element]:
         from docutils.parsers.rst.directives.body import CodeBlock, NumberLines
 
         if not self.document.settings.file_insertion_enabled:
-            raise DirectiveError(2, 'Directive "{}" disabled.'.format(self.name))
+            raise DirectiveError(2, f'Directive "{self.name}" disabled.')
 
         source_dir = Path(self.document["source"]).absolute().parent
         include_arg = "".join([s.strip() for s in self.arguments[0].splitlines()])
@@ -375,13 +401,30 @@ class MockIncludeDirective:
         # tab_width = self.options.get("tab-width", self.document.settings.tab_width)
         try:
             file_content = path.read_text(encoding=encoding, errors=error_handler)
+        except FileNotFoundError as error:
+            raise DirectiveError(
+                4, f'Directive "{self.name}": file not found: {str(path)!r}'
+            ) from error
         except Exception as error:
             raise DirectiveError(
-                4,
-                'Directive "{}": error reading file: {}\n{}.'.format(
-                    self.name, path, error
-                ),
+                4, f'Directive "{self.name}": error reading file: {path}\n{error}.'
+            ) from error
+
+        if self.renderer.sphinx_env is not None:
+            # Emit the "include-read" event
+            # see: https://github.com/sphinx-doc/sphinx/commit/ff18318613db56d0000db47e5c8f0140556cef0c
+            arg = [file_content]
+            relative_path = Path(
+                os.path.relpath(path, start=self.renderer.sphinx_env.srcdir)
             )
+            parent_docname = Path(self.renderer.document["source"]).stem
+            self.renderer.sphinx_env.app.events.emit(
+                "include-read",
+                relative_path,
+                parent_docname,
+                arg,
+            )
+            file_content = arg[0]
 
         # get required section of text
         startline = self.options.get("start-line", None)
@@ -396,9 +439,7 @@ class MockIncludeDirective:
             if split_index < 0:
                 raise DirectiveError(
                     4,
-                    'Directive "{}"; option "{}": text not found "{}".'.format(
-                        self.name, split_on_type, split_on
-                    ),
+                    f'Directive "{self.name}"; option "{split_on_type}": text not found "{split_on}".',
                 )
             if split_on_type == "start-after":
                 startline += split_index + len(split_on)
@@ -415,10 +456,10 @@ class MockIncludeDirective:
             if "number-lines" in self.options:
                 try:
                     startline = int(self.options["number-lines"] or 1)
-                except ValueError:
+                except ValueError as err:
                     raise DirectiveError(
-                        3, ":number-lines: with non-integer " "start value"
-                    )
+                        3, ":number-lines: with non-integer start value"
+                    ) from err
                 endline = startline + len(file_content.splitlines())
                 if file_content.endswith("\n"):
                     file_content = file_content[:-1]
@@ -456,7 +497,7 @@ class MockIncludeDirective:
         try:
             self.renderer.document["source"] = str(path)
             self.renderer.reporter.source = str(path)
-            self.renderer.reporter.get_source_and_line = lambda l: (str(path), l)
+            self.renderer.reporter.get_source_and_line = lambda li: (str(path), li)
             if "relative-images" in self.options:
                 self.renderer.md_env["relative-images"] = os.path.relpath(
                     path.parent, source_dir
@@ -468,7 +509,9 @@ class MockIncludeDirective:
                     path.parent,
                 )
             self.renderer.nested_render_text(
-                file_content, startline + 1, allow_headings=True
+                file_content,
+                startline + 1,
+                heading_offset=self.options.get("heading-offset", 0),
             )
         finally:
             self.renderer.document["source"] = source

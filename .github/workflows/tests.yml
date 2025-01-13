@@ -13,49 +13,53 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python 3.8
-      uses: actions/setup-python@v1
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
       with:
-        python-version: "3.8"
-    - uses: pre-commit/action@v2.0.0
+        python-version: "3.10"
+    - uses: pre-commit/action@v3.0.1
 
   tests:
 
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.7", "3.8", "3.9", "3.10"]
-        sphinx: [">=4,<5"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        sphinx: [">=8,<9"]
         os: [ubuntu-latest]
         include:
-          - os: ubuntu-latest
-            python-version: "3.8"
-            sphinx: ">=3,<4"
-          - os: windows-latest
-            python-version: "3.8"
-            sphinx: ">=4,<5"
+        - os: ubuntu-latest
+          python-version: "3.10"
+          sphinx: ">=7,<8"
+        - os: windows-latest
+          python-version: "3.10"
+          sphinx: ">=7,<8"
 
     runs-on: ${{ matrix.os }}
 
+    name: "pytest: py${{ matrix.python-version }}, sphinx${{ matrix.sphinx }}, on ${{ matrix.os }}"
+
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+        allow-prereleases: true
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e .[linkify,testing]
-        pip install --upgrade-strategy "only-if-needed" "sphinx${{ matrix.sphinx }}"
+        pip install -e ".[linkify,testing]" "sphinx${{ matrix.sphinx }}"
     - name: Run pytest
       run: |
         pytest --cov=myst_parser --cov-report=xml --cov-report=term-missing
         coverage xml
     - name: Upload to Codecov
-      if: github.repository == 'executablebooks/MyST-Parser' && matrix.python-version == 3.8
-      uses: codecov/codecov-action@v1
+      if: github.repository == 'executablebooks/MyST-Parser' && matrix.python-version == 3.10 && matrix.os == 'ubuntu-latest'
+      uses: codecov/codecov-action@v4
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         name: myst-parser-pytests
         flags: pytests
         file: ./coverage.xml
@@ -69,22 +73,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        docutils-version: ["0.16", "0.17", "0.18"]
+        docutils-version: ["0.19", "0.20", "0.21"]
 
     steps:
     - name: Checkout source
-      uses: actions/checkout@v2
-    - name: Set up Python 3.8
-      uses: actions/setup-python@v1
+      uses: actions/checkout@v4
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
       with:
-        python-version: "3.8"
-    - name: Modify setup
-      run: python .github/workflows/docutils_setup.py setup.cfg README.md
-    - name: Install dependencies
+        python-version: "3.10"
+    - name: Install setup
       run: |
         python -m pip install --upgrade pip
-        pip install .
-        pip install pytest~=6.2 pytest-param-files~=0.3.3 docutils==${{ matrix.docutils-version }}
+        pip install tomlkit
+    - name: Modify setup
+      run: python .github/workflows/docutils_setup.py pyproject.toml README.md
+    - name: Install dependencies
+      run: |
+        pip install .[linkify,testing-docutils] docutils==${{ matrix.docutils-version }}
     - name: ensure sphinx is not installed
       run: |
         python -c "\
@@ -95,32 +101,51 @@ jobs:
         else:
             raise AssertionError()"
     - name: Run pytest for docutils-only tests
-      run: pytest tests/test_docutils.py tests/test_renderers/test_fixtures_docutils.py
+      run: pytest tests/test_docutils.py tests/test_renderers/test_fixtures_docutils.py tests/test_renderers/test_include_directive.py tests/test_renderers/test_myst_config.py
     - name: Run docutils CLI
       run: echo "test" | myst-docutils-html
+
+  # https://github.com/marketplace/actions/alls-green#why
+  check:  # This job does nothing and is only used for the branch protection
+
+    if: always()
+
+    needs:
+    - pre-commit
+    - tests
+    - check-myst-docutils
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Decide whether the needed jobs succeeded or failed
+      uses: re-actors/alls-green@release/v1
+      with:
+        jobs: ${{ toJSON(needs) }}
 
   publish:
 
     name: Publish myst-parser to PyPi
-    needs: [pre-commit, tests, check-myst-docutils]
+    needs:
+    - check
     if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags')
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
-      uses: actions/checkout@v2
-    - name: Set up Python 3.8
-      uses: actions/setup-python@v1
+      uses: actions/checkout@v4
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
       with:
-        python-version: "3.8"
-    - name: Build package
+        python-version: "3.10"
+    - name: install flit
       run: |
-        pip install build
-        python -m build
-    - name: Publish
-      uses: pypa/gh-action-pypi-publish@v1.3.1
-      with:
-        user: __token__
-        password: ${{ secrets.PYPI_KEY }}
+        pip install flit~=3.4
+    - name: Build and publish
+      run: |
+        flit publish
+      env:
+        FLIT_USERNAME: __token__
+        FLIT_PASSWORD: ${{ secrets.PYPI_KEY }}
 
   publish-docutils:
 
@@ -130,19 +155,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
-      uses: actions/checkout@v2
-    - name: Set up Python 3.8
-      uses: actions/setup-python@v1
+      uses: actions/checkout@v4
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
       with:
-        python-version: "3.8"
-    - name: Modify setup
-      run: python .github/workflows/docutils_setup.py setup.cfg README.md
-    - name: Build package
+        python-version: "3.10"
+    - name: install flit and tomlkit
       run: |
-        pip install build
-        python -m build
-    - name: Publish
-      uses: pypa/gh-action-pypi-publish@v1.3.1
-      with:
-        user: __token__
-        password: ${{ secrets.PYPI_KEY_DOCUTILS }}
+        pip install flit~=3.4 tomlkit
+    - name: Modify setup
+      run: python .github/workflows/docutils_setup.py pyproject.toml README.md
+    - name: Build and publish
+      run: |
+        flit publish
+      env:
+        FLIT_USERNAME: __token__
+        FLIT_PASSWORD: ${{ secrets.PYPI_KEY_DOCUTILS }}

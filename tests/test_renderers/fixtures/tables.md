@@ -1,15 +1,14 @@
---------------------------
 Simple:
 .
 a|b
 -|-
 1|2
 .
-<document source="notset">
+<document source="<src>/index.md">
     <table classes="colwidths-auto">
         <tgroup cols="2">
-            <colspec colwidth="50.0">
-            <colspec colwidth="50.0">
+            <colspec colwidth="50">
+            <colspec colwidth="50">
             <thead>
                 <row>
                     <entry>
@@ -28,17 +27,16 @@ a|b
                             2
 .
 
---------------------------
 Header only:
 .
 | abc | def |
 | --- | --- |
 .
-<document source="notset">
+<document source="<src>/index.md">
     <table classes="colwidths-auto">
         <tgroup cols="2">
-            <colspec colwidth="50.0">
-            <colspec colwidth="50.0">
+            <colspec colwidth="50">
+            <colspec colwidth="50">
             <thead>
                 <row>
                     <entry>
@@ -49,19 +47,18 @@ Header only:
                             def
 .
 
---------------------------
 Aligned:
 .
 a | b | c
 :-|:-:| -:
 1 | 2 | 3
 .
-<document source="notset">
+<document source="<src>/index.md">
     <table classes="colwidths-auto">
         <tgroup cols="3">
-            <colspec colwidth="33.33">
-            <colspec colwidth="33.33">
-            <colspec colwidth="33.33">
+            <colspec colwidth="33">
+            <colspec colwidth="33">
+            <colspec colwidth="33">
             <thead>
                 <row>
                     <entry classes="text-left">
@@ -86,18 +83,17 @@ a | b | c
                             3
 .
 
---------------------------
 Nested syntax:
 .
 | *a* | __*b*__  |
 | --- | -------- |
 |c  | {sub}`x` |
 .
-<document source="notset">
+<document source="<src>/index.md">
     <table classes="colwidths-auto">
         <tgroup cols="2">
-            <colspec colwidth="50.0">
-            <colspec colwidth="50.0">
+            <colspec colwidth="50">
+            <colspec colwidth="50">
             <thead>
                 <row>
                     <entry>
@@ -120,18 +116,17 @@ Nested syntax:
                                 x
 .
 
---------------------------
 External links:
 .
 a|b
 |-|-|
 [link-a](https://www.google.com/)|[link-b](https://www.python.org/)
 .
-<document source="notset">
+<document source="<src>/index.md">
     <table classes="colwidths-auto">
         <tgroup cols="2">
-            <colspec colwidth="50.0">
-            <colspec colwidth="50.0">
+            <colspec colwidth="50">
+            <colspec colwidth="50">
             <thead>
                 <row>
                     <entry>

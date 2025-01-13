@@ -3,7 +3,7 @@ Duplicate Reference definitions:
 [a]: b
 [a]: c
 .
-<string>:2: (WARNING/2) Duplicate reference definition: A [myst.ref]
+<string>:2: (WARNING/2) Duplicate reference definition: A [myst.duplicate_def]
 .
 
 Missing Reference:
@@ -19,7 +19,7 @@ abc
 
 {xyz}`a`
 .
-<string>:3: (ERROR/3) Unknown interpreted text role "xyz".
+<string>:3: (WARNING/2) Unknown interpreted text role "xyz". [myst.role_unknown]
 .
 
 Unknown directive:
@@ -28,7 +28,7 @@ Unknown directive:
 ```{xyz}
 ```
 .
-<string>:2: (ERROR/3) Unknown directive type "xyz".
+<string>:2: (WARNING/2) Unknown directive type: 'xyz' [myst.directive_unknown]
 .
 
 Bad Front Matter:
@@ -37,24 +37,42 @@ Bad Front Matter:
 a: {
 ---
 .
-<string>:1: (ERROR/3) Front matter block:
-while parsing a flow node
-expected the node content, but found '<stream end>'
-  in "<unicode string>", line 1, column 5:
-    a: {
-        ^
+<string>:1: (WARNING/2) Malformed YAML [myst.topmatter]
+.
+
+Unknown Front Matter myst key:
+.
+---
+myst:
+  unknown: true
+---
+.
+<string>:1: (WARNING/2) Unknown field: unknown [myst.topmatter]
+.
+
+Invalid Front Matter myst key:
+.
+---
+myst:
+  title_to_header: 1
+  url_schemes: [1]
+  substitutions:
+    key: []
+---
+.
+<string>:1: (WARNING/2) 'title_to_header' must be of type <class 'bool'> (got 1 that is a <class 'int'>). [myst.topmatter]
+<string>:1: (WARNING/2) 'url_schemes' is not a list of strings: [1] [myst.topmatter]
 .
 
 Bad HTML Meta
 .
 ---
-html_meta:
-  empty:
-  name noequals: value
+myst:
+  html_meta:
+    name noequals: value
 
 ---
 .
-<string>:: (ERROR/3) Error parsing meta tag attribute "empty": No content.
 <string>:: (ERROR/3) Error parsing meta tag attribute "name noequals": no '=' in noequals.
 .
 
@@ -92,14 +110,34 @@ Non-consecutive headings:
 <string>:2: (WARNING/2) Non-consecutive header level increase; H1 to H3 [myst.header]
 .
 
-multiple footnote definitions
+footnote reference with no definition
+.
+[^1]
+
+[^a]
+.
+<string>:3: (ERROR/3) Too many autonumbered footnote references: only 0 corresponding footnotes available.
+<string>:1: (ERROR/3) Unknown target name: "1".
+<string>:3: (ERROR/3) Unknown target name: "a".
+.
+
+footnote definition with no reference
+.
+[^1]: definition
+[^a]: definition
+.
+<string>:1: (WARNING/2) Footnote [1] is not referenced. [ref.footnote]
+<string>:2: (WARNING/2) Footnote [#] is not referenced. [ref.footnote]
+.
+
+duplicate footnote definition
 .
 [^a]
 
 [^a]: definition 1
 [^a]: definition 2
 .
-<string>:: (WARNING/2) Multiple footnote definitions found for label: 'a' [myst.footnote]
+<string>:4: (WARNING/2) Duplicate footnote definition found for label: 'a' [ref.footnote]
 .
 
 Warnings in eval-rst
@@ -125,16 +163,14 @@ lines
 <string>:12: (ERROR/3) Unknown interpreted text role "unknown".
 .
 
-bad-option-value
+directive bad-option-value
 .
 ```{note}
 :class: [1]
 ```
 .
-<string>:1: (ERROR/3) Directive 'note': option "class" value not string (enclose with ""): [1]
-
-:class: [1]
-
+<string>:1: (WARNING/2) 'note': Invalid option value for 'class': [1]: cannot make "[1]" into a class name [myst.directive_option]
+<string>:1: (ERROR/3) Content block expected for the "note" directive; none found.
 .
 
 header nested in admonition
@@ -143,7 +179,7 @@ header nested in admonition
 # Header
 ```
 .
-<string>:2: (WARNING/2) Disallowed nested header found, converting to rubric [myst.nested_header]
+
 .
 
 nested parse warning
@@ -157,5 +193,5 @@ Paragraph
 {unknown}`a`
 ```
 .
-<string>:7: (ERROR/3) Unknown interpreted text role "unknown".
+<string>:7: (WARNING/2) Unknown interpreted text role "unknown". [myst.role_unknown]
 .

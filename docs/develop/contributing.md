@@ -16,7 +16,7 @@ To install `myst-parser` for development, take the following steps:
 git clone https://github.com/executablebooks/MyST-Parser
 cd MyST-Parser
 git checkout master
-pip install -e .[code_style,testing,rtd]
+pip install -e .[code_style,linkify,testing,rtd]
 ```
 
 ## Code Style
@@ -49,7 +49,7 @@ All functions and class methods should be annotated with types and include a doc
 
 ## Testing
 
-For code tests, myst-parser uses [pytest](https://docs.pytest.org)):
+For code tests, myst-parser uses [pytest](https://docs.pytest.org):
 
 ```shell
 >> cd MyST-Parser
